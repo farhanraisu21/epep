@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Harley Road King Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Rye&family=Teko:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #d95a32; /* Sunset orange */
+            font-family: 'Teko', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        .ui-layer {
+            position: absolute;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .interactive {
+            pointer-events: auto;
+        }
+        
+        /* Mobile Controls */
+        .control-btn {
+            background: rgba(20, 10, 5, 0.7);
+            border: 2px solid #f59e0b; /* Amber */
+            box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+            color: #f59e0b;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.1s;
+        }
+        .control-btn:active, .control-btn.active {
+            background: rgba(245, 158, 11, 0.4);
+            transform: scale(0.95);
+        }
+
+        #startScreen {
+            background: radial-gradient(circle at center, #78350f 0%, #000000 100%);
+            z-index: 50;
+        }
+
+        .title-text {
+            font-family: 'Rye', cursive; /* Vintage/Western look */
+            color: #fbbf24;
+            text-shadow: 2px 2px 0px #b45309, 4px 4px 10px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- WebGL Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Start Screen Overlay -->
+    <div id="startScreen" class="absolute inset-0 flex flex-col items-center justify-center interactive transition-opacity duration-700">
+        <h1 class="text-6xl md:text-8xl font-bold tracking-widest title-text mb-4 text-center">ROAD KING</h1>
+        <p class="text-amber-300 text-xl md:text-2xl tracking-widest mb-12 font-bold drop-shadow-md">AMERICAN V-TWIN CRUISER</p>
+        <button id="startBtn" class="bg-gradient-to-b from-amber-500 to-amber-700 border-2 border-amber-300 text-white hover:from-amber-400 hover:to-amber-600 font-bold text-2xl md:text-3xl py-4 px-12 rounded-lg transition-all duration-300 shadow-[0_0_20px_rgba(245,158,11,0.5)] uppercase tracking-wider">
+            Start Engine
+        </button>
+        <p class="text-amber-200/70 mt-6 text-lg">W A S D / Arrows to Cruise. Turn up the volume!</p>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="ui-layer w-full h-full opacity-0 transition-opacity duration-1000">
+        <!-- Speedometer -->
+        <div class="absolute bottom-8 right-8 text-right">
+            <div class="text-8xl font-bold text-amber-500 leading-none drop-shadow-[0_0_10px_rgba(245,158,11,0.8)]" id="speedDisplay">0</div>
+            <div class="text-2xl text-amber-200/50 tracking-widest uppercase">KM/H</div>
+        </div>
+
+        <!-- Mobile Controls -->
+        <div class="absolute bottom-8 left-8 flex gap-4 md:hidden interactive">
+            <button class="control-btn w-16 h-16" id="btn-left">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"></path></svg>
+            </button>
+            <button class="control-btn w-16 h-16" id="btn-right">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path></svg>
+            </button>
+        </div>
+        <div class="absolute bottom-32 right-8 flex flex-col gap-4 md:hidden interactive">
+            <button class="control-btn w-20 h-20" id="btn-gas">
+                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 15l7-7 7 7"></path></svg>
+            </button>
+            <button class="control-btn w-20 h-16 border-red-500 text-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]" id="btn-brake">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. GAME VARIABLES ---
+        let scene, camera, renderer;
+        let bike, frontWheel, rearWheel;
+        let environmentObjects = [];
+        let headlight;
+        
+        let speed = 0;
+        const MAX_SPEED = 180; // Slower max speed for cruiser
+        let steering = 0;
+        let bikeX = 0;
+        
+        // Inputs
+        const keys = { w: false, a: false, s: false, d: false };
+        let isEngineStarted = false;
+
+        // Audio Variables
+        let audioCtx;
+        let masterGain;
+        let isAccelerating = false;
+        let noiseBuffer;
+        
+        // V-Twin Engine Scheduler Variables
+        let nextThumpTime = 0;
+        let isCylinder1 = true;
+
+        // --- 2. THREE.JS INITIALIZATION ---
+        function init3D() {
+            const canvas = document.getElementById('gameCanvas');
+            
+            // Scene & Camera
+            scene = new THREE.Scene();
+            // Desert Sunset Colors
+            scene.background = new THREE.Color(0xd95a32);
+            scene.fog = new THREE.FogExp2(0xd95a32, 0.012);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xffaa55, 1.2); // Warm orange sun
+            sunLight.position.set(-20, 10, -50);
+            sunLight.castShadow = true;
+            sunLight.shadow.camera.top = 30;
+            sunLight.shadow.camera.bottom = -30;
+            sunLight.shadow.camera.left = -30;
+            sunLight.shadow.camera.right = 30;
+            scene.add(sunLight);
+
+            // Headlight attached to bike
+            headlight = new THREE.SpotLight(0xffffff, 2, 100, 0.4, 0.5, 1);
+            headlight.position.set(0, 1, -1);
+            headlight.target.position.set(0, 0, -20);
+            scene.add(headlight);
+            scene.add(headlight.target);
+
+            createEnvironment();
+            createBike();
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function createEnvironment() {
+            // Desert Ground (Wide)
+            const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+            const groundMat = new THREE.MeshStandardMaterial({ 
+                color: 0x9c6b30, // Sandy brown
+                roughness: 1 
+            });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.z = -300;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Straight Highway
+            const roadGeo = new THREE.PlaneGeometry(16, 1000);
+            const roadMat = new THREE.MeshStandardMaterial({ 
+                color: 0x222222, // Dark asphalt
+                roughness: 0.8 
+            });
+            const road = new THREE.Mesh(roadGeo, roadMat);
+            road.rotation.x = -Math.PI / 2;
+            road.position.z = -300;
+            road.position.y = 0.05;
+            road.receiveShadow = true;
+            scene.add(road);
+
+            // Lane dashes
+            const dashGeo = new THREE.PlaneGeometry(0.3, 4);
+            const dashMat = new THREE.MeshBasicMaterial({ color: 0xddaa00 }); // Yellow lines
+
+            for (let i = 0; i < 40; i++) {
+                const zPos = -i * 20 + 20;
+                
+                const dash1 = new THREE.Mesh(dashGeo, dashMat);
+                dash1.rotation.x = -Math.PI / 2;
+                dash1.position.set(0, 0.08, zPos);
+                scene.add(dash1);
+                environmentObjects.push(dash1);
+
+                // Desert rocks/cacti occasionally
+                if (i % 3 === 0) {
+                    const side = (i % 2 === 0) ? 1 : -1;
+                    const rockGeo = new THREE.DodecahedronGeometry(Math.random() * 2 + 1);
+                    const rockMat = new THREE.MeshStandardMaterial({ color: 0x5a3a1f, roughness: 0.9 });
+                    const rock = new THREE.Mesh(rockGeo, rockMat);
+                    rock.position.set(side * (Math.random() * 20 + 12), 0, zPos);
+                    rock.rotation.set(Math.random(), Math.random(), Math.random());
+                    scene.add(rock);
+                    environmentObjects.push(rock);
+                }
+            }
+        }
+
+        function createBike() {
+            bike = new THREE.Group();
+            
+            // Materials
+            const redMat = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.1, metalness: 0.3 }); // Dark crimson
+            const chromeMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.1, metalness: 1.0 }); // Chrome
+            const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+            const leatherMat = new THREE.MeshStandardMaterial({ color: 0x221100, roughness: 0.9 }); // Dark brown seat
+
+            // Thick Cruiser Wheels
+            const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.4, 32);
+            wheelGeo.rotateZ(Math.PI / 2);
+            
+            rearWheel = new THREE.Mesh(wheelGeo, blackMat);
+            rearWheel.position.set(0, 0.4, 1.0);
+            rearWheel.castShadow = true;
+            bike.add(rearWheel);
+
+            frontWheel = new THREE.Mesh(wheelGeo, blackMat);
+            frontWheel.position.set(0, 0.4, -1.2);
+            frontWheel.castShadow = true;
+            bike.add(frontWheel);
+
+            // Chrome Rims
+            const rimGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.42, 16);
+            rimGeo.rotateZ(Math.PI / 2);
+            const rearRim = new THREE.Mesh(rimGeo, chromeMat);
+            rearWheel.add(rearRim);
+            const frontRim = new THREE.Mesh(rimGeo, chromeMat);
+            frontWheel.add(frontRim);
+
+            // Engine (Big V-Twin block)
+            const engineGeo = new THREE.BoxGeometry(0.5, 0.6, 0.6);
+            const engine = new THREE.Mesh(engineGeo, chromeMat);
+            engine.position.set(0, 0.6, 0);
+            engine.castShadow = true;
+            bike.add(engine);
+
+            // Teardrop Fuel Tank (Wide)
+            const tankGeo = new THREE.SphereGeometry(0.4, 16, 16);
+            tankGeo.scale(1, 0.6, 1.8);
+            const tank = new THREE.Mesh(tankGeo, redMat);
+            tank.position.set(0, 1.0, -0.2);
+            tank.castShadow = true;
+            bike.add(tank);
+
+            // Deep Leather Seat
+            const seatGeo = new THREE.BoxGeometry(0.5, 0.15, 0.8);
+            const seat = new THREE.Mesh(seatGeo, leatherMat);
+            seat.position.set(0, 0.75, 0.5);
+            bike.add(seat);
+
+            // Hard Saddlebags (Luggage)
+            const bagGeo = new THREE.BoxGeometry(0.3, 0.5, 0.8);
+            
+            const leftBag = new THREE.Mesh(bagGeo, redMat);
+            leftBag.position.set(-0.45, 0.7, 0.9);
+            bike.add(leftBag);
+            
+            const rightBag = new THREE.Mesh(bagGeo, redMat);
+            rightBag.position.set(0.45, 0.7, 0.9);
+            bike.add(rightBag);
+
+            // Big Round Headlight
+            const lightGeo = new THREE.SphereGeometry(0.2, 16, 16);
+            const light = new THREE.Mesh(lightGeo, chromeMat);
+            light.position.set(0, 1.0, -1.3);
+            bike.add(light);
+
+            const glassGeo = new THREE.CircleGeometry(0.18, 16);
+            const glass = new THREE.Mesh(glassGeo, new THREE.MeshBasicMaterial({color: 0xffffff}));
+            glass.position.set(0, 1.0, -1.48);
+            bike.add(glass);
+
+            // Ape Hanger Handlebars
+            const barGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2);
+            barGeo.rotateZ(Math.PI / 2);
+            const bar = new THREE.Mesh(barGeo, chromeMat);
+            bar.position.set(0, 1.3, -1.0);
+            bike.add(bar);
+
+            // Dual Exhaust (Low and long)
+            const exhaustGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.5);
+            exhaustGeo.rotateX(Math.PI / 2);
+            
+            const leftExhaust = new THREE.Mesh(exhaustGeo, chromeMat);
+            leftExhaust.position.set(-0.35, 0.3, 0.6);
+            bike.add(leftExhaust);
+
+            const rightExhaust = new THREE.Mesh(exhaustGeo, chromeMat);
+            rightExhaust.position.set(0.35, 0.3, 0.6);
+            bike.add(rightExhaust);
+
+            scene.add(bike);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 3. AUDIO SYNTHESIS (HARLEY V-TWIN) ---
+        function initAudio() {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+
+            masterGain = audioCtx.createGain();
+            masterGain.connect(audioCtx.destination);
+            masterGain.gain.value = 1.5; // Bump up volume
+
+            // Create White Noise Buffer for engine exhaust pops
+            const bufferSize = audioCtx.sampleRate * 2.0; 
+            noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1; // Pure white noise
+            }
+
+            nextThumpTime = audioCtx.currentTime + 0.1; 
+        }
+
+        function scheduleThumps() {
+            if (!audioCtx || !isEngineStarted) return;
+
+            // Look ahead scheduling
+            while (nextThumpTime < audioCtx.currentTime + 0.1) {
+                
+                const speedRatio = speed / MAX_SPEED;
+                isAccelerating = keys.w;
+                
+                // Idle around 800 RPM, max speed around 4000 RPM
+                let rpm = 800 + (speedRatio * 3200);
+                if (isAccelerating) rpm += 400; // Rev bump under load
+
+                // 1. Noise Source (The "Explosion")
+                const noiseSrc = audioCtx.createBufferSource();
+                noiseSrc.buffer = noiseBuffer;
+                noiseSrc.loop = true; 
+
+                // 2. Filters for the "Pop" (Snap) and "Thud" (Bass)
+                const bassFilter = audioCtx.createBiquadFilter();
+                bassFilter.type = 'lowpass';
+                bassFilter.frequency.value = 90 + (speedRatio * 150); // Deep bass thump (80-150Hz + higher under load)
+                bassFilter.Q.value = 1.5;
+
+                const snapFilter = audioCtx.createBiquadFilter();
+                snapFilter.type = 'bandpass';
+                snapFilter.frequency.value = 2000; // Crisp exhaust snap at 2kHz
+                snapFilter.Q.value = 0.5;
+
+                const snapGain = audioCtx.createGain();
+                snapGain.gain.value = 0.4 + (speedRatio * 0.4); // Snap gets louder and harsher at high RPM
+
+                // 3. Envelope Gain (Extremely fast exponential decay for authentic burst)
+                const envGain = audioCtx.createGain();
+                envGain.gain.setValueAtTime(0, nextThumpTime);
+                
+                const maxGain = 2.5 + (speedRatio * 1.5); // Total volume of the pop
+                envGain.gain.linearRampToValueAtTime(maxGain, nextThumpTime + 0.002); // Instant attack (2ms)
+                
+                const decayTime = Math.max(0.02, 0.12 - (speedRatio * 0.09));
+                envGain.gain.exponentialRampToValueAtTime(0.01, nextThumpTime + decayTime);
+
+                // 4. Routing
+                noiseSrc.connect(bassFilter);
+                bassFilter.connect(envGain);
+
+                noiseSrc.connect(snapFilter);
+                snapFilter.connect(snapGain);
+                snapGain.connect(envGain);
+
+                envGain.connect(masterGain);
+
+                // 5. Play
+                noiseSrc.start(nextThumpTime);
+                noiseSrc.stop(nextThumpTime + decayTime + 0.05);
+
+                // 6. Harley 45-degree V-Twin Scheduling (315° / 405°)
+                const rps = rpm / 60; 
+                const timePerDegree = (1 / rps) / 360; 
+                
+                if (isCylinder1) {
+                    nextThumpTime += 315 * timePerDegree;
+                } else {
+                    nextThumpTime += 405 * timePerDegree;
+                }
+                
+                isCylinder1 = !isCylinder1;
+            }
+        }
+
+        // --- 4. INPUT HANDLING ---
+        window.addEventListener('keydown', (e) => {
+            if(e.key === 'w' || e.key === 'ArrowUp') keys.w = true;
+            if(e.key === 'a' || e.key === 'ArrowLeft') keys.a = true;
+            if(e.key === 's' || e.key === 'ArrowDown') keys.s = true;
+            if(e.key === 'd' || e.key === 'ArrowRight') keys.d = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if(e.key === 'w' || e.key === 'ArrowUp') keys.w = false;
+            if(e.key === 'a' || e.key === 'ArrowLeft') keys.a = false;
+            if(e.key === 's' || e.key === 'ArrowDown') keys.s = false;
+            if(e.key === 'd' || e.key === 'ArrowRight') keys.d = false;
+        });
+
+        // Touch Controls
+        function setupTouch(id, keyName) {
+            const el = document.getElementById(id);
+            if(!el) return;
+            el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[keyName] = true; el.classList.add('active'); });
+            el.addEventListener('touchend', (e) => { e.preventDefault(); keys[keyName] = false; el.classList.remove('active'); });
+            el.addEventListener('mousedown', () => { keys[keyName] = true; el.classList.add('active'); });
+            el.addEventListener('mouseup', () => { keys[keyName] = false; el.classList.remove('active'); });
+        }
+        setupTouch('btn-gas', 'w');
+        setupTouch('btn-brake', 's');
+        setupTouch('btn-left', 'a');
+        setupTouch('btn-right', 'd');
+
+        // Start Button
+        document.getElementById('startBtn').addEventListener('click', () => {
+            if (!audioCtx) initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            isEngineStarted = true;
+            
+            document.getElementById('startScreen').classList.add('opacity-0', 'pointer-events-none');
+            document.getElementById('hud').classList.remove('opacity-0');
+        });
+
+        // --- 5. GAME LOOP ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (isEngineStarted) {
+                // Cruiser Physics (Heavy, slow accel)
+                if (keys.w) {
+                    speed += 60 * delta; // Much slower acceleration than H2R
+                } else if (keys.s) {
+                    speed -= 150 * delta; // Braking
+                } else {
+                    speed -= 25 * delta; // Friction
+                }
+
+                speed = Math.max(0, Math.min(speed, MAX_SPEED));
+
+                // Steering (Heavy handling)
+                const turnSpeed = (speed > 5 ? 1 : 0) * (1 - (speed / MAX_SPEED) * 0.3) * 2.5 * delta;
+                if (keys.a) bikeX -= turnSpeed * 10;
+                if (keys.d) bikeX += turnSpeed * 10;
+
+                // Road bounds
+                bikeX = Math.max(-6, Math.min(bikeX, 6));
+
+                bike.position.x = bikeX;
+                
+                // Lean effect (cruisers don't lean as much)
+                const targetLean = (keys.a ? 0.3 : (keys.d ? -0.3 : 0)) * (speed / MAX_SPEED);
+                bike.rotation.z += (targetLean - bike.rotation.z) * 5 * delta;
+
+                // Wheels
+                const wheelRotSpeed = (speed / 3.6) * delta;
+                frontWheel.rotation.x -= wheelRotSpeed;
+                rearWheel.rotation.x -= wheelRotSpeed;
+
+                // Move environment
+                const moveDist = (speed / 3.6) * delta * 2;
+                environmentObjects.forEach(obj => {
+                    obj.position.z += moveDist;
+                    if (obj.position.z > 20) {
+                        obj.position.z -= 800;
+                        // Randomize X for rocks when they loop
+                        if (obj.geometry.type === 'DodecahedronGeometry') {
+                            const side = Math.random() > 0.5 ? 1 : -1;
+                            obj.position.x = side * (Math.random() * 20 + 12);
+                        }
+                    }
+                });
+
+                headlight.position.x = bike.position.x;
+                headlight.target.position.x = bike.position.x;
+
+                // Camera follow (cruiser style - slightly lower and closer)
+                const camX = bikeX * 0.5;
+                const camY = 2.5; 
+                const camZ = bike.position.z + 5;
+
+                // Subtle shake (cruisers vibrate, but don't violently shake like H2R at top speed)
+                let shakeX = (Math.random() - 0.5) * 0.02 * (speed/MAX_SPEED);
+                let shakeY = (Math.random() - 0.5) * 0.02 * (speed/MAX_SPEED);
+
+                camera.position.lerp(new THREE.Vector3(camX + shakeX, camY + shakeY, camZ), 0.1);
+                camera.lookAt(bike.position.x, 1, bike.position.z - 10);
+
+                // HUD
+                document.getElementById('speedDisplay').innerText = Math.floor(speed);
+
+                scheduleThumps(); // Procedural audio scheduling
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = () => {
+            init3D();
+            animate();
+        };
+    </script>
+</body>
+</html>
